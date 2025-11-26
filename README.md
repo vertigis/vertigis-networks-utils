@@ -1,2 +1,2 @@
-# job-management
-The code in this repository is used with the Job Management capabilities supported in VertiGIS Networks. It contains scripts to setup the supporting infrastructure.
+# networks-utils
+This repo contains code for scripts, workflows, etc. that can be used with VertiGIS Networks. These might be installation script for additional functionality or docker images, or ...
