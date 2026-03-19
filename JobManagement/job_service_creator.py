@@ -18,12 +18,6 @@ from typing import Any, Dict, List, Optional, Tuple
 from arcgis.gis import GIS
 from arcgis.features import FeatureLayerCollection
 
-# ------------------------
-# HOST URL :- https://dev002.networks.vertigisapps.com
-# USERNAME :- JobManagement_Admin
-# PASSWORD :- JobManagement_Admin1
-# ------------------------
-
 def prompt_for_inputs(
     host: Optional[str] = None,
     username: Optional[str] = None,

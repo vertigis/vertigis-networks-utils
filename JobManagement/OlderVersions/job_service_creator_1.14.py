@@ -11,12 +11,6 @@ from typing import Any, Dict, List, Optional, Tuple
 from arcgis.gis import GIS
 from arcgis.features import FeatureLayerCollection
 
-# ------------------------
-# HOST URL :- https://dev001.networks.vertigisapps.com
-# USERNAME :- <admin account>
-# PASSWORD :- <admin login>
-# ------------------------
-
 def prompt_for_inputs():
     host = input("Enter HOST URL: ").strip().rstrip("/")
     username = input("Enter Portal Username: ").strip()
