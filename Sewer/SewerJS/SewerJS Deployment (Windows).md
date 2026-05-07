@@ -7,7 +7,7 @@
 
 ## Prerequisites
 
-> You will need your **ACR Username** and **ACR Password** → ask Petr Diviš.
+> You will need your **ACR Username** and **ACR Password** → ask VertiGIS Support.
 
 ---
 
