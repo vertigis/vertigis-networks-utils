@@ -81,7 +81,8 @@ Usage:
 
 # Windows
 .\sewer_windows.ps1 -Service sewer -AcrUser <USER> -AcrPass <PASS>
-.\sewer_windows.ps1 -Service sewercc -Update```
+.\sewer_windows.ps1 -Service sewercc -Update
+```
 
 See [`Sewer/Deployment-Linux.md`](Sewer/Sewer/Deployment-Linux.md) and [`Sewer/Deployment-Windows.md`](Sewer/Sewer/Deployment-Windows.md) for full configuration reference.
 
