@@ -16,8 +16,8 @@ if (-not $Port1) { $Port1 = 5000 }
 $Port2         = Read-Host "External Port 2 [5001]"
 if (-not $Port2) { $Port2 = 5001 }
 
-$Image         = Read-Host "Docker Image [vertigisapps.azurecr.io/networks/dxf-export-windows:1.4.0]"
-if (-not $Image) { $Image = "vertigisapps.azurecr.io/networks/dxf-export-windows:1.4.0" }
+$Image         = Read-Host "Docker Image [vertigisapps.azurecr.io/networks/dxf-export-windows:1.5.0]"
+if (-not $Image) { $Image = "vertigisapps.azurecr.io/networks/dxf-export-windows:1.5.0" }
 
 # .env Datei erzeugen
 @"
