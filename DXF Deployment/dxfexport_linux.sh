@@ -11,7 +11,6 @@
 #   - Enhanced security and logging
 #   - Docker installation: use Ubuntu official Docker repo when Docker missing
 #   - PostgreSQL installation: if missing, install using apt and pgdg script
-# Version: 1.0
 # ============================================================
 
 set -euo pipefail
@@ -32,7 +31,7 @@ LOG_FILE="/tmp/dxf-deployment-$(date +%Y%m%d-%H%M%S).log"
 
 # Default Parameters
 REGISTRY_NAME="vertigisapps.azurecr.io"
-DEFAULT_IMAGE="networks/dxf-export:1.2.0"
+DEFAULT_IMAGE="networks/dxf-export:1.5.0"
 DEFAULT_PORT1=5000
 DEFAULT_PORT2=5001
 CONTAINER_NAME="dxf-export-service"
