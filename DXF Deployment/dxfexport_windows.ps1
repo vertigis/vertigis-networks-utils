@@ -45,7 +45,7 @@ $script:LOG_FILE = Join-Path $env:TEMP ("dxf-deployment-{0}.log" -f (Get-Date -F
 
 # Defaults
 $script:REGISTRY_NAME = "vertigisapps.azurecr.io"
-$script:DEFAULT_IMAGE = "networks/dxf-export-windows:1.4.0"
+$script:DEFAULT_IMAGE = "networks/dxf-export-windows:1.5.0"
 $script:DEFAULT_PORT1 = 5000
 $script:DEFAULT_PORT2 = 5001
 $script:CONTAINER_NAME = "dxf-export-service"
