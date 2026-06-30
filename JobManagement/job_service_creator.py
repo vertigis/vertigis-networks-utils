@@ -24,14 +24,8 @@ def prompt_for_inputs(
     password: Optional[str] = None,
     track_job_history: Optional[bool] = None,
 ):
-    """Gather connection info either from provided defaults or by prompting.
+    """Gather connection info either from provided defaults or by prompting."""
 
-    When any of the first three values are ``None`` or empty we prompt the user.
-    ``track_job_history`` is a tri-state flag: if ``None`` the user is asked interactively,
-    otherwise the boolean value is returned directly.
-    """
-
-    # helper to request a non-empty value
     def _ask(prompt_text: str) -> str:
         val = input(prompt_text).strip()
         while not val:
@@ -78,13 +72,13 @@ USERNAME: Optional[str] = None
 PASSWORD: Optional[str] = None
 TRACK_JOB_HISTORY: bool = False
 
-PORTAL_URL = ""  # initialized later once HOST is known
-VERIFY_CERT = True  # set to False for self-signed/invalid certs
+PORTAL_URL = ""
+VERIFY_CERT = True
 
 JOBM_USER_ROLE_NAME = "JobM_UserRole"
 GROUP_TITLE = "Job Management Users"
 FOLDER_TITLE = "JobManagement"
-JOBM_SERVICE_NAME = "JobManagementSystem"
+JOBM_SERVICE_NAME = "JobManagementSystemRegression118_nohistory"  # Updated service name to avoid conflicts
 
 _POLL_DELAY_SEC = 2
 _POLL_MAX_TRIES = 20
@@ -282,31 +276,48 @@ def _service_is_hosted(item) -> bool:
         return False
 
 def _adopt_existing_if_present(gis: GIS, owner: str, service_name: str):
-    items = (gis.content.search(
-        query=f'title:"{service_name}" AND type:"Feature Service"',
-        max_items=20,
-    ) or [])
-    if not items:
-        items = (gis.content.search(
-            query=f'title:"{service_name}" AND type:"Feature Layer"',
-            max_items=20,
-        ) or [])
+    items = gis.content.search(
+        query='type:"Feature Service"',
+        max_items=200
+    ) or []
 
     me = gis.users.me
     is_admin = getattr(me, "role", "") == "org_admin"
+
+    exact_matches = []
 
     for it in items:
         try:
             if _is_view_item(it):
                 continue
+
+            title = (getattr(it, "title", "") or "").strip()
+
+            if title.lower() != service_name.lower():
+                continue
+
             if it.owner != owner and is_admin:
                 try:
                     it.reassign_to(owner)
                 except Exception:
                     pass
-            return it
-        except Exception:
+
+            flc = _get_flc(gis, it)
+            if flc is None:
+                print(f"[DEBUG] Skipping broken service '{title}' ({it.id})")
+                continue
+
+            exact_matches.append(it)
+
+        except Exception as ex:
+            print(f"[DEBUG] Skipping item due to error: {ex}")
             continue
+
+    if exact_matches:
+        chosen = exact_matches[0]
+        print(f"[DEBUG] Using service: title='{chosen.title}', id='{chosen.id}'")
+        return chosen
+
     return None
 
 def _create_service_via_rest(gis: GIS, owner: str, service_name: str) -> Dict[str, Any]:
@@ -346,9 +357,13 @@ def _base_featureserver_url(item) -> str:
 
 def _get_flc(gis: GIS, item) -> FeatureLayerCollection:
     base = _base_featureserver_url(item)
-    if not base:
-        return FeatureLayerCollection.fromitem(item)
-    return FeatureLayerCollection(base, gis)
+    try:
+        if not base:
+            return FeatureLayerCollection.fromitem(item)
+        return FeatureLayerCollection(base, gis)
+    except Exception as e:
+        print(f"[ERROR] Could not create FeatureLayerCollection for item '{getattr(item, 'title', None)}' (id={getattr(item, 'id', None)}): {e}")
+        return None
 
 def _get_layer_by_name(flc: FeatureLayerCollection, name: str):
     lname = name.lower()
@@ -362,14 +377,6 @@ def _add_schema(flc: FeatureLayerCollection, payload: Dict[str, Any]) -> None:
     if not payload:
         return
     flc.manager.add_to_definition(payload)
-
-def _enable_jobs_attachments(flc: FeatureLayerCollection) -> None:
-    jobs = _get_layer_by_name(flc, "Jobs")
-    if not jobs:
-        return
-    has_att = getattr(jobs.properties, "hasAttachments", None)
-    if not has_att:
-        jobs.manager.update_definition({"hasAttachments": True})
 
 def _ensure_relationship(flc: FeatureLayerCollection) -> None:
     jobs = _get_layer_by_name(flc, "Jobs")
@@ -410,8 +417,7 @@ def _ensure_relationship(flc: FeatureLayerCollection) -> None:
     }
     try:
         flc.manager.add_to_definition(payload)
-        return
-    except Exception as e:
+    except Exception:
         pass
 
 def _wait_fs_ready(gis: GIS, fs_item) -> bool:
@@ -460,17 +466,257 @@ def _find_blocking_item(gis: GIS, owner: str, name: str):
         return hosted_same_owner[0]
     return hits[0] if hits else None
 
+
+def jobs_layer_def() -> Dict[str, Any]:
+    return {
+        "name": "Jobs",
+        "type": "Feature Layer",
+        "geometryType": "esriGeometryPolygon",
+        "displayField": "jobid",
+        "fields": [
+            {"name": "OBJECTID", "type": "esriFieldTypeOID", "alias": "OBJECTID"},
+            {"name": "GlobalID", "type": "esriFieldTypeGlobalID", "alias": "GlobalID"},
+            {"name": "jobid", "type": "esriFieldTypeString", "alias": "Job ID", "length": 64},
+            {"name": "name", "type": "esriFieldTypeString", "alias": "Job Name", "length": 255},
+            {"name": "description", "type": "esriFieldTypeString", "alias": "Description", "length": 2000},
+            {"name": "status", "type": "esriFieldTypeString", "alias": "Status", "length": 50},
+            {"name": "jobtype", "type": "esriFieldTypeString", "alias": "Job Type", "length": 50},
+            {"name": "tags", "type": "esriFieldTypeString", "alias": "Tags", "length": 2000},
+            {"name": "assignedto", "type": "esriFieldTypeString", "alias": "Assigned To", "length": 128},
+            {"name": "state", "type": "esriFieldTypeString", "alias": "Assignment State", "length": 50},
+            {"name": "createdby", "type": "esriFieldTypeString", "alias": "Created By"},
+            {"name": "createddate", "type": "esriFieldTypeDate", "alias": "Created Date"},
+            {"name": "lastupdated", "type": "esriFieldTypeDate", "alias": "Last Updated"},
+            {"name": "versionname", "type": "esriFieldTypeString", "alias": "Version Name", "length": 320},
+            {"name": "featureservice", "type": "esriFieldTypeString", "alias": "Feature Service", "length": 128},
+            {"name": "assignedsupervisor", "type": "esriFieldTypeString", "alias": "Assigned Supervisor", "length": 128},
+            {"name": "startdate", "type": "esriFieldTypeDate", "alias": "Start Date"},
+            {"name": "enddate", "type": "esriFieldTypeDate", "alias": "End Date"},
+            {"name": "duedate", "type": "esriFieldTypeDate", "alias": "Due Date"},
+            {"name": "lastsync", "type": "esriFieldTypeDate", "alias": "Last sync"},
+            {"name": "groups", "type": "esriFieldTypeString", "alias": "Groups", "length": 50},
+            {"name": "groupid", "type": "esriFieldTypeString", "alias": "Group ID", "length": 64},
+            {"name": "isworking", "type": "esriFieldTypeString", "alias": "isworking", "length": 50},
+            {"name": "actualhrs", "type": "esriFieldTypeDouble", "alias": "Actual Hours"},
+            {"name": "customerField", "type": "esriFieldTypeString", "alias": "Customer Field", "length": 2000},
+        ],
+        "objectIdField": "OBJECTID",
+        "globalIdField": "GlobalID",
+        "capabilities": "Query,Create,Update,Delete,Editing,Sync",
+    }
+
+def users_table_def() -> Dict[str, Any]:
+    return {
+        "name": "Users",
+        "type": "Table",
+        "fields": [
+            {"name": "OBJECTID", "type": "esriFieldTypeOID", "alias": "OBJECTID"},
+            {"name": "userid", "type": "esriFieldTypeString", "alias": "User ID", "length": 128},
+            {"name": "username", "type": "esriFieldTypeString", "alias": "User Name", "length": 255},
+            {"name": "usertype", "type": "esriFieldTypeString", "alias": "User Type", "length": 255},
+            {"name": "email", "type": "esriFieldTypeString", "alias": "Email", "length": 255},
+            {"name": "role", "type": "esriFieldTypeString", "alias": "Role", "length": 64},
+            {"name": "groups", "type": "esriFieldTypeString", "alias": "Groups", "length": 128},
+            {"name": "groupid", "type": "esriFieldTypeString", "alias": "Group ID", "length": 64},
+            {"name": "flag", "type": "esriFieldTypeString", "alias": "User Flag", "length": 128},
+            {"name": "jobfields", "type": "esriFieldTypeString", "alias": "Job Fields", "length": 255},
+            {"name": "GlobalID", "type": "esriFieldTypeGlobalID", "alias": "GlobalID"},
+        ],
+        "objectIdField": "OBJECTID",
+        "globalIdField": "GlobalID",
+        "capabilities": "Query,Create,Update,Delete,Editing,Sync",
+    }
+
+def groups_table_def() -> Dict[str, Any]:
+    return {
+        "name": "Groups",
+        "type": "Table",
+        "fields": [
+            {"name": "OBJECTID", "type": "esriFieldTypeOID", "alias": "OBJECTID"},
+            {"name": "groupid", "type": "esriFieldTypeString", "alias": "Group ID", "length": 64},
+            {"name": "groups", "type": "esriFieldTypeString", "alias": "Groups", "length": 255},
+            {"name": "requiredfields", "type": "esriFieldTypeString", "alias": "Required Fields", "length": 255},
+            {"name": "resolution", "type": "esriFieldTypeString", "alias": "Conflict Resolution", "length": 255},
+            {"name": "hierarchy", "type": "esriFieldTypeString", "alias": "Hierarchy", "length": 255},
+            {"name": "deadlineday", "type": "esriFieldTypeString", "alias": "Deadline Days", "length": 255},
+            {"name": "tags", "type": "esriFieldTypeString", "alias": "Tags", "length": 255},
+            {"name": "isdeleted", "type": "esriFieldTypeString", "alias": "IsDeleted", "length": 255},
+            {"name": "selectedtime", "type": "esriFieldTypeString", "alias": "Schedule Run Time", "length": 255},
+            {"name": "GlobalID", "type": "esriFieldTypeGlobalID", "alias": "GlobalID"},
+        ],
+        "objectIdField": "OBJECTID",
+        "globalIdField": "GlobalID",
+        "capabilities": "Query,Create,Update,Delete,Editing,Sync",
+    }
+
+def jobfeatureservicebranches_table_def() -> Dict[str, Any]:
+    return {
+        "name": "JobFeatureServiceBranches",
+        "type": "Table",
+        "fields": [
+            {"name": "OBJECTID", "type": "esriFieldTypeOID", "alias": "OBJECTID"},
+            {"name": "GlobalID", "type": "esriFieldTypeGlobalID", "alias": "GlobalID"},
+            {"name": "jobid", "type": "esriFieldTypeString", "alias": "Job ID", "length": 64},
+            {"name": "featureservice", "type": "esriFieldTypeString", "alias": "Feature Service", "length": 255},
+            {"name": "versionname", "type": "esriFieldTypeString", "alias": "Version Name", "length": 320},
+            {"name": "createddate", "type": "esriFieldTypeDate", "alias": "Created Date"},
+            {"name": "lastupdated", "type": "esriFieldTypeDate", "alias": "Last Updated"},
+        ],
+        "objectIdField": "OBJECTID",
+        "globalIdField": "GlobalID",
+        "capabilities": "Query,Create,Update,Delete,Editing,Sync",
+    }
+
+def jobhistory_table_def() -> Dict[str, Any]:
+    return {
+        "name": "JobHistory",
+        "type": "Table",
+        "fields": [
+            {"name": "OBJECTID", "type": "esriFieldTypeOID", "alias": "OBJECTID"},
+            {"name": "globalid", "type": "esriFieldTypeGlobalID", "alias": "globalid"},
+            {"name": "job_id", "type": "esriFieldTypeString", "alias": "Job ID", "length": 64},
+            {"name": "jobname", "type": "esriFieldTypeString", "alias": "Job Name", "length": 255},
+            {"name": "history_action", "type": "esriFieldTypeString", "alias": "Action", "length": 255},
+            {"name": "parameter", "type": "esriFieldTypeString", "alias": "Parameters", "length": 255},
+            {"name": "log_date", "type": "esriFieldTypeDate", "alias": "Date"},
+            {"name": "executedby", "type": "esriFieldTypeString", "alias": "Executed By", "length": 255},
+            {"name": "comments", "type": "esriFieldTypeString", "alias": "Comment", "length": 255},
+        ],
+        "objectIdField": "OBJECTID",
+        "globalIdField": "globalid",
+        "capabilities": "Query,Create,Update,Delete,Editing,Sync",
+    }
+
+def groupusers_table_def() -> Dict[str, Any]:
+    """Table to track portal group members and their roles in Job Management System."""
+    return {
+        "name": "GroupUsers",
+        "type": "Table",
+        "fields": [
+            {"name": "OBJECTID", "type": "esriFieldTypeOID", "alias": "OBJECTID"},
+            {"name": "GlobalID", "type": "esriFieldTypeGlobalID", "alias": "GlobalID"},
+            {"name": "groupid", "type": "esriFieldTypeString", "alias": "Group ID", "length": 64},
+            {"name": "userid", "type": "esriFieldTypeString", "alias": "User ID", "length": 128},
+        ],
+        "objectIdField": "OBJECTID",
+        "globalIdField": "GlobalID",
+        "capabilities": "Query,Create,Update,Delete,Editing,Sync",
+    }
+
+def jobmanagementsettings_table_def() -> Dict[str, Any]:
+    """Table to store Job Management configuration settings."""
+    return {
+        "name": "JobManagementSettings",
+        "type": "Table",
+        "fields": [
+            {"name": "OBJECTID", "type": "esriFieldTypeOID", "alias": "OBJECTID"},
+            {"name": "globalid", "type": "esriFieldTypeGlobalID", "alias": "GlobalID"},
+            {"name": "settingkey", "type": "esriFieldTypeString", "alias": "Setting Key", "length": 128},
+            {"name": "settingvalue", "type": "esriFieldTypeString", "alias": "Setting Value", "length": 2000},
+            {"name": "created_user", "type": "esriFieldTypeString", "alias": "created_user", "length": 255},
+            {"name": "created_date", "type": "esriFieldTypeDate", "alias": "created_date"},
+            {"name": "last_edited_user", "type": "esriFieldTypeString", "alias": "last_edited_user", "length": 255},
+            {"name": "last_edited_date", "type": "esriFieldTypeDate", "alias": "last_edited_date"},
+        ],
+        "objectIdField": "OBJECTID",
+        "globalIdField": "globalid",
+        "capabilities": "Query,Create,Update,Delete,Editing,Sync",
+    }
+
+def _ensure_table_fields(flc: FeatureLayerCollection, table_name: str, expected_fields: List[Dict[str, Any]]) -> None:
+    """Add any missing fields to an existing table.
+
+    OID and GlobalID fields are skipped because they cannot be added after
+    table creation.
+    """
+    table = _get_table_by_name(flc, table_name)
+    if not table:
+        return
+    existing_field_names = {f["name"].lower() for f in (table.properties.fields or [])}
+    fields_to_add = [
+        f for f in expected_fields
+        if f["name"].lower() not in existing_field_names
+        and f["type"] not in ("esriFieldTypeOID", "esriFieldTypeGlobalID")
+    ]
+    if fields_to_add:
+        try:
+            table.manager.add_to_definition({"fields": fields_to_add})
+            print(f"[Schema] Added {len(fields_to_add)} missing field(s) to '{table_name}': "
+                  f"{[f['name'] for f in fields_to_add]}")
+        except Exception as e:
+            print(f"[Schema] Failed to add fields to '{table_name}': {e}")
+
+
+def _ensure_layer_fields(flc: FeatureLayerCollection, layer_name: str, expected_fields: List[Dict[str, Any]]) -> None:
+    """Add any missing fields to an existing feature layer."""
+    layer = _get_layer_by_name(flc, layer_name)
+    if not layer:
+        return
+    existing_field_names = {f["name"].lower() for f in (layer.properties.fields or [])}
+    fields_to_add = [
+        f for f in expected_fields
+        if f["name"].lower() not in existing_field_names
+        and f["type"] not in ("esriFieldTypeOID", "esriFieldTypeGlobalID")
+    ]
+    if fields_to_add:
+        try:
+            layer.manager.add_to_definition({"fields": fields_to_add})
+            print(f"[Schema] Added {len(fields_to_add)} missing field(s) to layer '{layer_name}': "
+                  f"{[f['name'] for f in fields_to_add]}")
+        except Exception as e:
+            print(f"[Schema] Failed to add fields to layer '{layer_name}': {e}")
+
+
+def _ensure_schema_bundle(gis: GIS, item, track_job_history: bool) -> None:
+    flc = _get_flc(gis, item)
+    payload = {"layers": [], "tables": []}
+    if not _get_layer_by_name(flc, "Jobs"):
+        payload["layers"].append(jobs_layer_def())
+    existing_tables = {(getattr(t.properties, "name", "") or "").strip().lower() for t in (flc.tables or [])}
+    if "users" not in existing_tables:
+        payload["tables"].append(users_table_def())
+    if "groups" not in existing_tables:
+        payload["tables"].append(groups_table_def())
+    if "jobfeatureservicebranches" not in existing_tables:
+        payload["tables"].append(jobfeatureservicebranches_table_def())
+    if "jobmanagementsettings" not in existing_tables:
+        payload["tables"].append(jobmanagementsettings_table_def())
+    if "jobhistory" not in existing_tables and track_job_history:
+        payload["tables"].append(jobhistory_table_def())
+    if "groupusers" not in existing_tables:
+        payload["tables"].append(groupusers_table_def())
+
+    if payload["layers"] or payload["tables"]:
+        _add_schema(flc, {k: v for k, v in payload.items() if v})
+        time.sleep(1.0)
+        flc = _get_flc(gis, item)
+
+    _ensure_layer_fields(flc, "Jobs", jobs_layer_def()["fields"])
+    _ensure_table_fields(flc, "Users", users_table_def()["fields"])
+    _ensure_table_fields(flc, "Groups", groups_table_def()["fields"])
+    _ensure_table_fields(flc, "JobFeatureServiceBranches", jobfeatureservicebranches_table_def()["fields"])
+    _ensure_table_fields(flc, "JobManagementSettings", jobmanagementsettings_table_def()["fields"])
+    _ensure_table_fields(flc, "GroupUsers", groupusers_table_def()["fields"])
+    if track_job_history:
+        _ensure_table_fields(flc, "JobHistory", jobhistory_table_def()["fields"])
+
+    _ensure_relationship(flc)
+
+
 def ensure_feature_service(gis: GIS, service_name: str, folder_title: str, group_id: Optional[str], track_job_history: bool) -> str:
     owner = getattr(gis.users.me, "username", USERNAME)
     item = _adopt_existing_if_present(gis, owner, service_name)
     if item:
         base_url = _base_featureserver_url(item) or "(no url)"
-        is_hosted = _service_is_hosted(item)
         _wait_fs_ready(gis, item)
         flc = _get_flc(gis, item)
-        tables = [users_table_def(), groups_table_def(), jobchange_table_def(), jobfeatureservicebranches_table_def()]
-        if track_job_history:
-            tables.append(jobhistory_table_def())
+        if flc is None:
+            return (
+                f"[ERROR] Feature Service found (itemId={getattr(item, 'id', None)}, url={base_url}), "
+                f"but could not access its FeatureLayerCollection. "
+                f"This usually means the service is broken, deleted, or inaccessible. "
+                f"Please check the service in your Portal and ensure it is published and accessible."
+            )
         try:
             _ensure_schema_bundle(gis, item, track_job_history)
         except Exception:
@@ -483,7 +729,7 @@ def ensure_feature_service(gis: GIS, service_name: str, folder_title: str, group
                         if blocker:
                             return (
                                 f"[FS] Service '{service_name}' exists but schema couldn't be changed (likely non-hosted). "
-                                f"Also could not create a hosted replacement with the SAME name because it’s already in use.\n"
+                                f"Also could not create a hosted replacement with the SAME name because it's already in use.\n"
                                 f"Blocking item → title='{blocker.title}', owner='{blocker.owner}', itemId={blocker.id}, url={getattr(blocker, 'url', '') or '(no url)'}.\n"
                                 f"Action: Delete/rename or transfer the blocking service, then re-run."
                             )
@@ -505,16 +751,16 @@ def ensure_feature_service(gis: GIS, service_name: str, folder_title: str, group
                 except Exception:
                     pass
                 flc2 = _get_flc(gis, hosted_item)
-                tables = [users_table_def(), groups_table_def(), jobchange_table_def(), jobfeatureservicebranches_table_def()]
-                if track_job_history:  # Add jobhistory_table_def only if track_job_history is True
+                tables = [users_table_def(), groups_table_def(), jobfeatureservicebranches_table_def(), jobmanagementsettings_table_def()]
+                if track_job_history:
                     tables.append(jobhistory_table_def())
+                tables.append(groupusers_table_def())
                 _add_schema(flc2, {
                     "layers": [jobs_layer_def()],
                     "tables": tables,
                 })
                 time.sleep(1.0)
                 flc2 = _get_flc(gis, hosted_item)
-                _enable_jobs_attachments(flc2)
                 _ensure_relationship(flc2)
                 if group_id:
                     try:
@@ -524,7 +770,7 @@ def ensure_feature_service(gis: GIS, service_name: str, folder_title: str, group
                 return (
                     f"[FS] Replaced non-hosted '{service_name}' with a Hosted service of the SAME name "
                     f"(itemId={hosted_item.id}, url={_base_featureserver_url(hosted_item)}). "
-                    "Full schema, attachments, relationship, and sharing applied."
+                    "Full schema, relationship, and sharing applied."
                 )
             else:
                 return (
@@ -543,12 +789,13 @@ def ensure_feature_service(gis: GIS, service_name: str, folder_title: str, group
                 item.share(groups=[group_id], org=True)
             except Exception:
                 pass
-        tables_list = "Users/Groups/JobChange/JobFeatureServiceBranches"
+        tables_list = "Users/Groups/JobFeatureServiceBranches/JobManagementSettings"
         if track_job_history:
             tables_list += "/JobHistory"
+        tables_list += "/GroupUsers"
         return (
             f"[FS] Service '{service_name}' already existed (itemId={item.id}, url={_base_featureserver_url(item)}); "
-            f"ensured Jobs layer, {tables_list} tables, relationship, attachments, and sharing."
+            f"ensured Jobs layer, {tables_list} tables, relationship, and sharing."
         )
     pre = _preflight_summary(gis)
     if not pre["hosting"]:
@@ -584,16 +831,16 @@ def ensure_feature_service(gis: GIS, service_name: str, folder_title: str, group
         pass
     _wait_fs_ready(gis, item)
     flc = _get_flc(gis, item)
-    tables = [users_table_def(), groups_table_def(), jobchange_table_def(), jobfeatureservicebranches_table_def()]
+    tables = [users_table_def(), groups_table_def(), jobfeatureservicebranches_table_def(), jobmanagementsettings_table_def()]
     if track_job_history:
         tables.append(jobhistory_table_def())
+    tables.append(groupusers_table_def())
     _add_schema(flc, {
         "layers": [jobs_layer_def()],
         "tables": tables,
     })
     time.sleep(1.0)
     flc = _get_flc(gis, item)
-    _enable_jobs_attachments(flc)
     _ensure_relationship(flc)
     if group_id:
         try:
@@ -602,168 +849,6 @@ def ensure_feature_service(gis: GIS, service_name: str, folder_title: str, group
             pass
     return f"[FS] '{service_name}' ready (itemId={item.id}, url={_base_featureserver_url(item)})."
 
-def jobs_layer_def() -> Dict[str, Any]:
-    return {
-        "name": "Jobs",
-        "type": "Feature Layer",
-        "geometryType": "esriGeometryPolygon",
-        "displayField": "jobid",
-        "fields": [
-            {"name": "OBJECTID", "type": "esriFieldTypeOID", "alias": "OBJECTID"},
-            {"name": "GlobalID", "type": "esriFieldTypeGlobalID", "alias": "GlobalID"},
-            {"name": "jobid", "type": "esriFieldTypeString", "alias": "Job ID", "length": 64},
-            {"name": "name", "type": "esriFieldTypeString", "alias": "Job Name", "length": 255},
-            {"name": "description", "type": "esriFieldTypeString", "alias": "Description", "length": 2000},
-            {"name": "status", "type": "esriFieldTypeString", "alias": "Status", "length": 50},
-            {"name": "jobtype", "type": "esriFieldTypeString", "alias": "Job Type", "length": 50},
-            {"name": "tags", "type": "esriFieldTypeString", "alias": "Tags", "length": 2000},
-            {"name": "assignedto", "type": "esriFieldTypeString", "alias": "Assigned To", "length": 128},
-            {"name": "state", "type": "esriFieldTypeString", "alias": "Assignment State", "length": 50},
-            {"name": "createdby", "type": "esriFieldTypeString", "alias": "Created By"},
-            {"name": "createddate", "type": "esriFieldTypeDate", "alias": "Created Date"},
-            {"name": "lastupdated", "type": "esriFieldTypeDate", "alias": "Last Updated"},
-            {"name": "versionname", "type": "esriFieldTypeString", "alias": "Version Name", "length": 128},
-            {"name": "featureservice", "type": "esriFieldTypeString", "alias": "Feature Service", "length": 128},
-            {"name": "assignedsupervisor", "type": "esriFieldTypeString", "alias": "Assigned Supervisor", "length": 128},
-            {"name": "startdate", "type": "esriFieldTypeDate", "alias": "Start Date"},
-            {"name": "enddate", "type": "esriFieldTypeDate", "alias": "End Date"},
-            {"name": "duedate", "type": "esriFieldTypeDate", "alias": "Due Date"},
-            {"name": "lastsync", "type": "esriFieldTypeDate", "alias": "Last sync"},
-            {"name": "groups", "type": "esriFieldTypeString", "alias": "Groups", "length": 50},
-            {"name": "groupid", "type": "esriFieldTypeString", "alias": "Group ID", "length": 64},
-            {"name": "isworking", "type": "esriFieldTypeString", "alias": "isworking", "length": 50},
-            {"name": "projectid", "type": "esriFieldTypeString", "alias": "Project ID", "length": 64},
-            {"name": "contractid", "type": "esriFieldTypeString", "alias": "Contract ID", "length": 64},
-            {"name": "actualhrs", "type": "esriFieldTypeDouble", "alias": "Actual Hours"},
-        ],
-        "objectIdField": "OBJECTID",
-        "globalIdField": "GlobalID",
-        "capabilities": "Query,Create,Update,Delete,Editing,Sync",
-    }
-
-def users_table_def() -> Dict[str, Any]:
-    return {
-        "name": "Users",
-        "type": "Table",
-        "fields": [
-            {"name": "OBJECTID", "type": "esriFieldTypeOID", "alias": "OBJECTID"},
-            {"name": "userid", "type": "esriFieldTypeString", "alias": "User ID", "length": 128},
-            {"name": "username", "type": "esriFieldTypeString", "alias": "User Name", "length": 255},
-            {"name": "usertype", "type": "esriFieldTypeString", "alias": "User Type", "length": 255},
-            {"name": "email", "type": "esriFieldTypeString", "alias": "Email", "length": 255},
-            {"name": "role", "type": "esriFieldTypeString", "alias": "Role", "length": 64},
-            {"name": "previousrole", "type": "esriFieldTypeString", "alias": "Previous Role", "length": 64},
-            {"name": "groups", "type": "esriFieldTypeString", "alias": "Groups", "length": 128},
-            {"name": "groupid", "type": "esriFieldTypeString", "alias": "Group ID", "length": 64},
-            {"name": "flag", "type": "esriFieldTypeString", "alias": "User Flag", "length": 128},
-            {"name": "jobfields", "type": "esriFieldTypeString", "alias": "Job Fields", "length": 255},
-            {"name": "GlobalID", "type": "esriFieldTypeGlobalID", "alias": "GlobalID"},
-        ],
-        "objectIdField": "OBJECTID",
-        "globalIdField": "GlobalID",
-        "capabilities": "Query,Create,Update,Delete,Editing,Sync",
-    }
-
-def groups_table_def() -> Dict[str, Any]:
-    return {
-        "name": "Groups",
-        "type": "Table",
-        "fields": [
-            {"name": "OBJECTID", "type": "esriFieldTypeOID", "alias": "OBJECTID"},
-            {"name": "groupid", "type": "esriFieldTypeString", "alias": "Group ID", "length": 64},
-            {"name": "groups", "type": "esriFieldTypeString", "alias": "Groups", "length": 255},
-            {"name": "requiredfields", "type": "esriFieldTypeString", "alias": "Required Fields", "length": 255},
-            {"name": "resolution", "type": "esriFieldTypeString", "alias": "Conflict Resolution", "length": 255},
-            {"name": "hierarchy", "type": "esriFieldTypeString", "alias": "Hierarchy", "length": 255},
-            {"name": "deadlineday", "type": "esriFieldTypeString", "alias": "Deadline Days", "length": 255},
-            {"name": "selectedtime", "type": "esriFieldTypeString", "alias": "Schedule Run Time", "length": 255},
-            {"name": "GlobalID", "type": "esriFieldTypeGlobalID", "alias": "GlobalID"},
-        ],
-        "objectIdField": "OBJECTID",
-        "globalIdField": "GlobalID",
-        "capabilities": "Query,Create,Update,Delete,Editing,Sync",
-    }
-
-def jobchange_table_def() -> Dict[str, Any]:
-    return {
-        "name": "JobChange",
-        "type": "Table",
-        "fields": [
-            {"name": "OBJECTID", "type": "esriFieldTypeOID", "alias": "OBJECTID"},
-            {"name": "jobglobalid", "type": "esriFieldTypeGUID", "alias": "Job GlobalID"},
-            {"name": "jobid", "type": "esriFieldTypeString", "alias": "Job ID (display)", "length": 64},
-            {"name": "changetype", "type": "esriFieldTypeString", "alias": "Change Type", "length": 50},
-            {"name": "changenotes", "type": "esriFieldTypeString", "alias": "Notes", "length": 1000},
-            {"name": "changedby", "type": "esriFieldTypeString", "alias": "Changed By", "length": 128},
-            {"name": "changedat", "type": "esriFieldTypeDate", "alias": "Changed At"},
-            {"name": "GlobalID", "type": "esriFieldTypeGlobalID", "alias": "GlobalID"},
-        ],
-        "objectIdField": "OBJECTID",
-        "globalIdField": "GlobalID",
-        "capabilities": "Query,Create,Update,Delete,Editing,Sync",
-    }
-
-def jobfeatureservicebranches_table_def() -> Dict[str, Any]:
-    return {
-        "name": "JobFeatureServiceBranches",
-        "type": "Table",
-        "fields": [
-            {"name": "OBJECTID", "type": "esriFieldTypeOID", "alias": "OBJECTID"},
-            {"name": "GlobalID", "type": "esriFieldTypeGlobalID", "alias": "GlobalID"},
-            {"name": "jobid", "type": "esriFieldTypeString", "alias": "Job ID", "length": 64},
-            {"name": "featureservice", "type": "esriFieldTypeString", "alias": "Feature Service", "length": 255},
-            {"name": "versionname", "type": "esriFieldTypeString", "alias": "Version Name", "length": 255},
-            {"name": "createddate", "type": "esriFieldTypeDate", "alias": "Created Date"},
-            {"name": "lastupdated", "type": "esriFieldTypeDate", "alias": "Last Updated"},
-        ],
-        "objectIdField": "OBJECTID",
-        "globalIdField": "GlobalID",
-        "capabilities": "Query,Create,Update,Delete,Editing,Sync",
-    }
-
-def jobhistory_table_def() -> Dict[str, Any]:
-    return {
-        "name": "JobHistory",
-        "type": "Table",
-        "fields": [
-            {"name": "OBJECTID", "type": "esriFieldTypeOID", "alias": "OBJECTID"},
-            {"name": "globalid", "type": "esriFieldTypeGlobalID", "alias": "globalid"},
-            {"name": "job_id", "type": "esriFieldTypeString", "alias": "Job ID", "length": 64},
-            {"name": "jobname", "type": "esriFieldTypeString", "alias": "Job Name", "length": 255},
-            {"name": "history_action", "type": "esriFieldTypeString", "alias": "Action", "length": 255},
-            {"name": "parameter", "type": "esriFieldTypeString", "alias": "Parameters", "length": 255},
-            {"name": "log_date", "type": "esriFieldTypeDate", "alias": "Date"},
-            {"name": "executedby", "type": "esriFieldTypeString", "alias": "Executed By", "length": 255},
-            {"name": "comments", "type": "esriFieldTypeString", "alias": "Comment", "length": 255},
-        ],
-        "objectIdField": "OBJECTID",
-        "globalIdField": "globalid",
-        "capabilities": "Query,Create,Update,Delete,Editing,Sync",
-    }
-
-def _ensure_schema_bundle(gis: GIS, item, track_job_history: bool) -> None:
-    flc = _get_flc(gis, item)
-    payload = {"layers": [], "tables": []}
-    if not _get_layer_by_name(flc, "Jobs"):
-        payload["layers"].append(jobs_layer_def())
-    existing_tables = {(getattr(t.properties, "name", "") or "").strip().lower() for t in (flc.tables or [])}
-    if "users" not in existing_tables:
-        payload["tables"].append(users_table_def())
-    if "groups" not in existing_tables:
-        payload["tables"].append(groups_table_def())
-    if "jobchange" not in existing_tables:
-        payload["tables"].append(jobchange_table_def())
-    if "jobfeatureservicebranches" not in existing_tables:
-        payload["tables"].append(jobfeatureservicebranches_table_def())
-    if "jobhistory" not in existing_tables:
-        if track_job_history:
-            payload["tables"].append(jobhistory_table_def())
-    if payload["layers"] or payload["tables"]:
-        _add_schema(flc, {k: v for k, v in payload.items() if v})
-        time.sleep(1.0)
-        flc = _get_flc(gis, item)
-    _enable_jobs_attachments(flc)
-    _ensure_relationship(flc)
 
 def run_setup_hardcoded() -> List[str]:
     gis, err = _connect()
@@ -810,7 +895,6 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--username", help="Portal username.")
     parser.add_argument("--password", help="Portal password.")
-    # boolean optional action to allow explicit enable/disable; default None causes interactive prompt
     parser.add_argument(
         "--track-job-history",
         dest="track_job_history",
@@ -831,7 +915,6 @@ def main() -> None:
     global HOST, USERNAME, PASSWORD, TRACK_JOB_HISTORY, PORTAL_URL
 
     args = _parse_args()
-    # if any of the connection parameters are missing we let prompt_for_inputs
     HOST, USERNAME, PASSWORD, TRACK_JOB_HISTORY = prompt_for_inputs(
         host=args.host,
         username=args.username,
@@ -839,7 +922,6 @@ def main() -> None:
         track_job_history=args.track_job_history,
     )
 
-    # the value supplied in HOST should already be the correct portal URL
     PORTAL_URL = HOST
 
     for line in run_setup_hardcoded():

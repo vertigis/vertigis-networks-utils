@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""Utility for provisioning the Job Management feature service and related
+portal items (role, group, folder) in an ArcGIS Enterprise/Portal installation.
+
+Run with ``-h``/``--help`` for usage information; any missing parameters will
+be requested interactively.
+"""
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import time
@@ -11,20 +18,73 @@ from typing import Any, Dict, List, Optional, Tuple
 from arcgis.gis import GIS
 from arcgis.features import FeatureLayerCollection
 
-def prompt_for_inputs():
-    host = input("Enter HOST URL: ").strip().rstrip("/")
-    username = input("Enter Portal Username: ").strip()
-    password = input("Enter Portal Password: ").strip()
-    return host, username, password
+def prompt_for_inputs(
+    host: Optional[str] = None,
+    username: Optional[str] = None,
+    password: Optional[str] = None,
+    track_job_history: Optional[bool] = None,
+):
+    """Gather connection info either from provided defaults or by prompting.
 
-HOST, USERNAME, PASSWORD = prompt_for_inputs()
-PORTAL_URL = f"{HOST}/portal"
+    When any of the first three values are ``None`` or empty we prompt the user.
+    ``track_job_history`` is a tri-state flag: if ``None`` the user is asked interactively,
+    otherwise the boolean value is returned directly.
+    """
+
+    # helper to request a non-empty value
+    def _ask(prompt_text: str) -> str:
+        val = input(prompt_text).strip()
+        while not val:
+            print(f"{prompt_text.split(':')[0]} cannot be empty. Please enter a valid value.")
+            val = input(prompt_text).strip()
+        return val
+
+    if host:
+        host = host.strip().rstrip("/")
+    else:
+        host = _ask("Enter full Portal URL (including web adaptor): ").rstrip("/")
+
+    if username:
+        username = username.strip()
+    else:
+        username = _ask("Enter Portal Username: ")
+
+    if password:
+        password = password.strip()
+    else:
+        password = _ask("Enter Portal Password: ")
+
+    if track_job_history is None:
+        while True:
+            track_input = input("Do you want to track job history? (yes/no): ").strip().lower()
+            if track_input in ["yes", "y", "no", "n"]:
+                track_job_history = track_input in ["yes", "y"]
+                break
+            elif track_input == "ctrl-c":
+                print("Execution cancelled by user.")
+                exit()
+            else:
+                print("Invalid input. Please enter 'yes', 'y', 'no', 'n', or 'ctrl-c' to cancel.")
+    if not track_job_history:
+        print("Job history tracking is disabled. Continuing without job history table creation.")
+    else:
+        print("Job history tracking is enabled.")
+
+    return host, username, password, track_job_history
+
+# global connection values; will be populated by command-line args or prompts
+HOST: Optional[str] = None
+USERNAME: Optional[str] = None
+PASSWORD: Optional[str] = None
+TRACK_JOB_HISTORY: bool = False
+
+PORTAL_URL = ""  # initialized later once HOST is known
 VERIFY_CERT = True  # set to False for self-signed/invalid certs
 
 JOBM_USER_ROLE_NAME = "JobM_UserRole"
 GROUP_TITLE = "Job Management Users"
-FOLDER_TITLE = "JobManagement1_14"
-JOBM_SERVICE_NAME = "JobManagementSystem1_14"
+FOLDER_TITLE = "JobManagement"
+JOBM_SERVICE_NAME = "JobManagementSystem"
 
 _POLL_DELAY_SEC = 2
 _POLL_MAX_TRIES = 20
@@ -313,8 +373,14 @@ def _enable_jobs_attachments(flc: FeatureLayerCollection) -> None:
 
 def _ensure_relationship(flc: FeatureLayerCollection) -> None:
     jobs = _get_layer_by_name(flc, "Jobs")
-    jc = _get_table_by_name(flc, "JobChange")
+    jc = _get_table_by_name(flc, "JobFeatureServiceBranches")
     if not jobs or not jc:
+        return
+    jobs_fields = {f["name"].lower(): f for f in jobs.properties.fields}
+    jc_fields = {f["name"].lower(): f for f in jc.properties.fields}
+    if "globalid" not in jobs_fields or "globalid" not in jc_fields:
+        return
+    if jobs_fields["globalid"]["type"] != "esriFieldTypeGlobalID" or jc_fields["globalid"]["type"] != "esriFieldTypeGlobalID":
         return
 
     rels = getattr(jobs.properties, "relationships", []) or []
@@ -331,7 +397,7 @@ def _ensure_relationship(flc: FeatureLayerCollection) -> None:
                 "id": getattr(jobs.properties, "id", None),
                 "relationships": [
                     {
-                        "name": "Jobs_JobChange",
+                        "name": "Jobs_JobFeatureServiceBranches",
                         "relatedTableId": getattr(jc.properties, "id", None),
                         "cardinality": "esriRelCardinalityOneToMany",
                         "role": "esriRelRoleOrigin",
@@ -345,28 +411,7 @@ def _ensure_relationship(flc: FeatureLayerCollection) -> None:
     try:
         flc.manager.add_to_definition(payload)
         return
-    except Exception:
-        pass
-    try:
-        fallback = {
-            "tables": [
-                {
-                    "id": getattr(jc.properties, "id", None),
-                    "relationships": [
-                        {
-                            "name": "Jobs_JobChange",
-                            "relatedTableId": getattr(jobs.properties, "id", None),
-                            "cardinality": "esriRelCardinalityManyToOne",
-                            "role": "esriRelRoleDestination",
-                            "keyField": "jobglobalid",
-                            "composite": True,
-                        }
-                    ],
-                }
-            ]
-        }
-        flc.manager.add_to_definition(fallback)
-    except Exception:
+    except Exception as e:
         pass
 
 def _wait_fs_ready(gis: GIS, fs_item) -> bool:
@@ -415,28 +460,19 @@ def _find_blocking_item(gis: GIS, owner: str, name: str):
         return hosted_same_owner[0]
     return hits[0] if hits else None
 
-def ensure_feature_service(gis: GIS, service_name: str, folder_title: str, group_id: Optional[str]) -> str:
+def ensure_feature_service(gis: GIS, service_name: str, folder_title: str, group_id: Optional[str], track_job_history: bool) -> str:
     owner = getattr(gis.users.me, "username", USERNAME)
     item = _adopt_existing_if_present(gis, owner, service_name)
     if item:
         base_url = _base_featureserver_url(item) or "(no url)"
-        if _is_view_item(item):
-            try:
-                folder_obj = gis.content.folders.get(folder=folder_title, owner=owner)
-                fid = _extract_folder_id(folder_obj)
-                if fid and getattr(item, "ownerFolder", None) != fid:
-                    item.move(folder=fid)
-            except Exception:
-                pass
-            if group_id:
-                try:
-                    item.share(groups=[group_id], org=True)
-                except Exception:
-                    pass
-            return f"[FS] Service '{service_name}' already exists (itemId={item.id}, url={base_url}); item is a View so schema was not changed."
+        is_hosted = _service_is_hosted(item)
         _wait_fs_ready(gis, item)
+        flc = _get_flc(gis, item)
+        tables = [users_table_def(), groups_table_def(), jobchange_table_def(), jobfeatureservicebranches_table_def()]
+        if track_job_history:
+            tables.append(jobhistory_table_def())
         try:
-            _ensure_schema_bundle(gis, item)
+            _ensure_schema_bundle(gis, item, track_job_history)
         except Exception:
             pre = _preflight_summary(gis)
             if pre.get("hosting"):
@@ -469,9 +505,12 @@ def ensure_feature_service(gis: GIS, service_name: str, folder_title: str, group
                 except Exception:
                     pass
                 flc2 = _get_flc(gis, hosted_item)
+                tables = [users_table_def(), groups_table_def(), jobchange_table_def(), jobfeatureservicebranches_table_def()]
+                if track_job_history:  # Add jobhistory_table_def only if track_job_history is True
+                    tables.append(jobhistory_table_def())
                 _add_schema(flc2, {
                     "layers": [jobs_layer_def()],
-                    "tables": [users_table_def(), groups_table_def(), jobchange_table_def()],
+                    "tables": tables,
                 })
                 time.sleep(1.0)
                 flc2 = _get_flc(gis, hosted_item)
@@ -479,7 +518,7 @@ def ensure_feature_service(gis: GIS, service_name: str, folder_title: str, group
                 _ensure_relationship(flc2)
                 if group_id:
                     try:
-                        hosted_item.share(groups=[group_id], org=True)
+                        hosted_item.share(groups=[group_id], everyone=False, org=True)
                     except Exception:
                         pass
                 return (
@@ -504,9 +543,12 @@ def ensure_feature_service(gis: GIS, service_name: str, folder_title: str, group
                 item.share(groups=[group_id], org=True)
             except Exception:
                 pass
+        tables_list = "Users/Groups/JobChange/JobFeatureServiceBranches"
+        if track_job_history:
+            tables_list += "/JobHistory"
         return (
             f"[FS] Service '{service_name}' already existed (itemId={item.id}, url={_base_featureserver_url(item)}); "
-            f"ensured Jobs layer, Users/Groups/JobChange tables, relationship, attachments, and sharing."
+            f"ensured Jobs layer, {tables_list} tables, relationship, attachments, and sharing."
         )
     pre = _preflight_summary(gis)
     if not pre["hosting"]:
@@ -542,9 +584,12 @@ def ensure_feature_service(gis: GIS, service_name: str, folder_title: str, group
         pass
     _wait_fs_ready(gis, item)
     flc = _get_flc(gis, item)
+    tables = [users_table_def(), groups_table_def(), jobchange_table_def(), jobfeatureservicebranches_table_def()]
+    if track_job_history:
+        tables.append(jobhistory_table_def())
     _add_schema(flc, {
         "layers": [jobs_layer_def()],
-        "tables": [users_table_def(), groups_table_def(), jobchange_table_def()],
+        "tables": tables,
     })
     time.sleep(1.0)
     flc = _get_flc(gis, item)
@@ -577,7 +622,7 @@ def jobs_layer_def() -> Dict[str, Any]:
             {"name": "createdby", "type": "esriFieldTypeString", "alias": "Created By"},
             {"name": "createddate", "type": "esriFieldTypeDate", "alias": "Created Date"},
             {"name": "lastupdated", "type": "esriFieldTypeDate", "alias": "Last Updated"},
-            {"name": "versionid", "type": "esriFieldTypeString", "alias": "Version ID", "length": 128},
+            {"name": "versionname", "type": "esriFieldTypeString", "alias": "Version Name", "length": 128},
             {"name": "featureservice", "type": "esriFieldTypeString", "alias": "Feature Service", "length": 128},
             {"name": "assignedsupervisor", "type": "esriFieldTypeString", "alias": "Assigned Supervisor", "length": 128},
             {"name": "startdate", "type": "esriFieldTypeDate", "alias": "Start Date"},
@@ -658,7 +703,45 @@ def jobchange_table_def() -> Dict[str, Any]:
         "capabilities": "Query,Create,Update,Delete,Editing,Sync",
     }
 
-def _ensure_schema_bundle(gis: GIS, item) -> None:
+def jobfeatureservicebranches_table_def() -> Dict[str, Any]:
+    return {
+        "name": "JobFeatureServiceBranches",
+        "type": "Table",
+        "fields": [
+            {"name": "OBJECTID", "type": "esriFieldTypeOID", "alias": "OBJECTID"},
+            {"name": "GlobalID", "type": "esriFieldTypeGlobalID", "alias": "GlobalID"},
+            {"name": "jobid", "type": "esriFieldTypeString", "alias": "Job ID", "length": 64},
+            {"name": "featureservice", "type": "esriFieldTypeString", "alias": "Feature Service", "length": 255},
+            {"name": "versionname", "type": "esriFieldTypeString", "alias": "Version Name", "length": 255},
+            {"name": "createddate", "type": "esriFieldTypeDate", "alias": "Created Date"},
+            {"name": "lastupdated", "type": "esriFieldTypeDate", "alias": "Last Updated"},
+        ],
+        "objectIdField": "OBJECTID",
+        "globalIdField": "GlobalID",
+        "capabilities": "Query,Create,Update,Delete,Editing,Sync",
+    }
+
+def jobhistory_table_def() -> Dict[str, Any]:
+    return {
+        "name": "JobHistory",
+        "type": "Table",
+        "fields": [
+            {"name": "OBJECTID", "type": "esriFieldTypeOID", "alias": "OBJECTID"},
+            {"name": "globalid", "type": "esriFieldTypeGlobalID", "alias": "globalid"},
+            {"name": "job_id", "type": "esriFieldTypeString", "alias": "Job ID", "length": 64},
+            {"name": "jobname", "type": "esriFieldTypeString", "alias": "Job Name", "length": 255},
+            {"name": "history_action", "type": "esriFieldTypeString", "alias": "Action", "length": 255},
+            {"name": "parameter", "type": "esriFieldTypeString", "alias": "Parameters", "length": 255},
+            {"name": "log_date", "type": "esriFieldTypeDate", "alias": "Date"},
+            {"name": "executedby", "type": "esriFieldTypeString", "alias": "Executed By", "length": 255},
+            {"name": "comments", "type": "esriFieldTypeString", "alias": "Comment", "length": 255},
+        ],
+        "objectIdField": "OBJECTID",
+        "globalIdField": "globalid",
+        "capabilities": "Query,Create,Update,Delete,Editing,Sync",
+    }
+
+def _ensure_schema_bundle(gis: GIS, item, track_job_history: bool) -> None:
     flc = _get_flc(gis, item)
     payload = {"layers": [], "tables": []}
     if not _get_layer_by_name(flc, "Jobs"):
@@ -670,6 +753,11 @@ def _ensure_schema_bundle(gis: GIS, item) -> None:
         payload["tables"].append(groups_table_def())
     if "jobchange" not in existing_tables:
         payload["tables"].append(jobchange_table_def())
+    if "jobfeatureservicebranches" not in existing_tables:
+        payload["tables"].append(jobfeatureservicebranches_table_def())
+    if "jobhistory" not in existing_tables:
+        if track_job_history:
+            payload["tables"].append(jobhistory_table_def())
     if payload["layers"] or payload["tables"]:
         _add_schema(flc, {k: v for k, v in payload.items() if v})
         time.sleep(1.0)
@@ -704,10 +792,59 @@ def run_setup_hardcoded() -> List[str]:
     _, msg2 = ensure_folder(gis, owner, FOLDER_TITLE)
     out.append(msg2)
 
-    out.append(ensure_feature_service(gis, JOBM_SERVICE_NAME, FOLDER_TITLE, gid))
+    out.append(ensure_feature_service(gis, JOBM_SERVICE_NAME, FOLDER_TITLE, gid, TRACK_JOB_HISTORY))
 
     return out
 
-if __name__ == "__main__":
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Script that ensures the ArcGIS Job Management system components exist in an ArcGIS Portal.\n"
+            "It will create or update a custom role, a user group, a content folder, and a hosted feature service.\n"
+            "Provide the full URL to the Portal web adaptor (e.g. https://server/portal or \"https://server/arcgis\"), not just the host."
+        )
+    )
+    parser.add_argument(
+        "--host",
+        help="Full URL to the Portal web adaptor (e.g. https://myserver/portal or https://myserver/arcgis). Trailing slash is optional.",
+    )
+    parser.add_argument("--username", help="Portal username.")
+    parser.add_argument("--password", help="Portal password.")
+    # boolean optional action to allow explicit enable/disable; default None causes interactive prompt
+    parser.add_argument(
+        "--track-job-history",
+        dest="track_job_history",
+        action="store_true",
+        help="Enable job history tracking (creates JobHistory table).",
+    )
+    parser.add_argument(
+        "--no-track-job-history",
+        dest="track_job_history",
+        action="store_false",
+        help="Disable job history tracking (skips JobHistory table).",
+    )
+    parser.set_defaults(track_job_history=None)
+    return parser.parse_args()
+
+
+def main() -> None:
+    global HOST, USERNAME, PASSWORD, TRACK_JOB_HISTORY, PORTAL_URL
+
+    args = _parse_args()
+    # if any of the connection parameters are missing we let prompt_for_inputs
+    HOST, USERNAME, PASSWORD, TRACK_JOB_HISTORY = prompt_for_inputs(
+        host=args.host,
+        username=args.username,
+        password=args.password,
+        track_job_history=args.track_job_history,
+    )
+
+    # the value supplied in HOST should already be the correct portal URL
+    PORTAL_URL = HOST
+
     for line in run_setup_hardcoded():
         print(line)
+
+
+if __name__ == "__main__":
+    main()
