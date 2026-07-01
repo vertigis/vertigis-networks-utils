@@ -78,7 +78,7 @@ VERIFY_CERT = True
 JOBM_USER_ROLE_NAME = "JobM_UserRole"
 GROUP_TITLE = "Job Management Users"
 FOLDER_TITLE = "JobManagement"
-JOBM_SERVICE_NAME = "JobManagementSystemRegression118_nohistory"  # Updated service name to avoid conflicts
+JOBM_SERVICE_NAME = "JobManagementSystemRegression118"  # Updated service name to avoid conflicts
 
 _POLL_DELAY_SEC = 2
 _POLL_MAX_TRIES = 20
