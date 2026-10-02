@@ -18,8 +18,6 @@ from typing import Any, Dict, List, Optional, Tuple
 from arcgis.gis import GIS
 from arcgis.features import FeatureLayerCollection
 
-SCRIPT_VERSION = "Networks v1.19"
-
 def prompt_for_inputs(
     host: Optional[str] = None,
     username: Optional[str] = None,
@@ -80,7 +78,7 @@ VERIFY_CERT = True
 JOBM_USER_ROLE_NAME = "JobM_UserRole"
 GROUP_TITLE = "Job Management Users"
 FOLDER_TITLE = "JobManagement"
-JOBM_SERVICE_NAME = "JobManagementSystem"
+JOBM_SERVICE_NAME = "JobManagementSystemRegression118"  # Updated service name to avoid conflicts
 
 _POLL_DELAY_SEC = 2
 _POLL_MAX_TRIES = 20
@@ -482,6 +480,7 @@ def jobs_layer_def() -> Dict[str, Any]:
             {"name": "name", "type": "esriFieldTypeString", "alias": "Job Name", "length": 255},
             {"name": "description", "type": "esriFieldTypeString", "alias": "Description", "length": 2000},
             {"name": "status", "type": "esriFieldTypeString", "alias": "Status", "length": 50},
+            {"name": "jobtype", "type": "esriFieldTypeString", "alias": "Job Type", "length": 50},
             {"name": "tags", "type": "esriFieldTypeString", "alias": "Tags", "length": 2000},
             {"name": "assignedto", "type": "esriFieldTypeString", "alias": "Assigned To", "length": 128},
             {"name": "state", "type": "esriFieldTypeString", "alias": "Assignment State", "length": 50},
@@ -489,15 +488,17 @@ def jobs_layer_def() -> Dict[str, Any]:
             {"name": "createddate", "type": "esriFieldTypeDate", "alias": "Created Date"},
             {"name": "lastupdated", "type": "esriFieldTypeDate", "alias": "Last Updated"},
             {"name": "versionname", "type": "esriFieldTypeString", "alias": "Version Name", "length": 320},
+            {"name": "featureservice", "type": "esriFieldTypeString", "alias": "Feature Service", "length": 128},
             {"name": "assignedsupervisor", "type": "esriFieldTypeString", "alias": "Assigned Supervisor", "length": 128},
             {"name": "startdate", "type": "esriFieldTypeDate", "alias": "Start Date"},
             {"name": "enddate", "type": "esriFieldTypeDate", "alias": "End Date"},
             {"name": "duedate", "type": "esriFieldTypeDate", "alias": "Due Date"},
             {"name": "lastsync", "type": "esriFieldTypeDate", "alias": "Last sync"},
+            {"name": "groups", "type": "esriFieldTypeString", "alias": "Groups", "length": 50},
             {"name": "groupid", "type": "esriFieldTypeString", "alias": "Group ID", "length": 64},
             {"name": "isworking", "type": "esriFieldTypeString", "alias": "isworking", "length": 50},
             {"name": "actualhrs", "type": "esriFieldTypeDouble", "alias": "Actual Hours"},
-            {"name": "customerfield", "type": "esriFieldTypeString", "alias": "Customer Field", "length": 2000},
+            {"name": "customerField", "type": "esriFieldTypeString", "alias": "Customer Field", "length": 2000},
         ],
         "objectIdField": "OBJECTID",
         "globalIdField": "GlobalID",
@@ -510,11 +511,15 @@ def users_table_def() -> Dict[str, Any]:
         "type": "Table",
         "fields": [
             {"name": "OBJECTID", "type": "esriFieldTypeOID", "alias": "OBJECTID"},
+            {"name": "userid", "type": "esriFieldTypeString", "alias": "User ID", "length": 128},
             {"name": "username", "type": "esriFieldTypeString", "alias": "User Name", "length": 255},
             {"name": "usertype", "type": "esriFieldTypeString", "alias": "User Type", "length": 255},
+            {"name": "email", "type": "esriFieldTypeString", "alias": "Email", "length": 255},
             {"name": "role", "type": "esriFieldTypeString", "alias": "Role", "length": 64},
+            {"name": "groups", "type": "esriFieldTypeString", "alias": "Groups", "length": 128},
             {"name": "groupid", "type": "esriFieldTypeString", "alias": "Group ID", "length": 64},
             {"name": "flag", "type": "esriFieldTypeString", "alias": "User Flag", "length": 128},
+            {"name": "jobfields", "type": "esriFieldTypeString", "alias": "Job Fields", "length": 255},
             {"name": "GlobalID", "type": "esriFieldTypeGlobalID", "alias": "GlobalID"},
         ],
         "objectIdField": "OBJECTID",
@@ -532,8 +537,11 @@ def groups_table_def() -> Dict[str, Any]:
             {"name": "groups", "type": "esriFieldTypeString", "alias": "Groups", "length": 255},
             {"name": "requiredfields", "type": "esriFieldTypeString", "alias": "Required Fields", "length": 255},
             {"name": "resolution", "type": "esriFieldTypeString", "alias": "Conflict Resolution", "length": 255},
+            {"name": "hierarchy", "type": "esriFieldTypeString", "alias": "Hierarchy", "length": 255},
+            {"name": "deadlineday", "type": "esriFieldTypeString", "alias": "Deadline Days", "length": 255},
             {"name": "tags", "type": "esriFieldTypeString", "alias": "Tags", "length": 255},
             {"name": "isdeleted", "type": "esriFieldTypeString", "alias": "IsDeleted", "length": 255},
+            {"name": "selectedtime", "type": "esriFieldTypeString", "alias": "Schedule Run Time", "length": 255},
             {"name": "GlobalID", "type": "esriFieldTypeGlobalID", "alias": "GlobalID"},
         ],
         "objectIdField": "OBJECTID",
@@ -588,7 +596,7 @@ def groupusers_table_def() -> Dict[str, Any]:
             {"name": "OBJECTID", "type": "esriFieldTypeOID", "alias": "OBJECTID"},
             {"name": "GlobalID", "type": "esriFieldTypeGlobalID", "alias": "GlobalID"},
             {"name": "groupid", "type": "esriFieldTypeString", "alias": "Group ID", "length": 64},
-            {"name": "username", "type": "esriFieldTypeString", "alias": "User Name", "length": 255},
+            {"name": "userid", "type": "esriFieldTypeString", "alias": "User ID", "length": 128},
         ],
         "objectIdField": "OBJECTID",
         "globalIdField": "GlobalID",
@@ -605,6 +613,10 @@ def jobmanagementsettings_table_def() -> Dict[str, Any]:
             {"name": "globalid", "type": "esriFieldTypeGlobalID", "alias": "GlobalID"},
             {"name": "settingkey", "type": "esriFieldTypeString", "alias": "Setting Key", "length": 128},
             {"name": "settingvalue", "type": "esriFieldTypeString", "alias": "Setting Value", "length": 2000},
+            {"name": "created_user", "type": "esriFieldTypeString", "alias": "created_user", "length": 255},
+            {"name": "created_date", "type": "esriFieldTypeDate", "alias": "created_date"},
+            {"name": "last_edited_user", "type": "esriFieldTypeString", "alias": "last_edited_user", "length": 255},
+            {"name": "last_edited_date", "type": "esriFieldTypeDate", "alias": "last_edited_date"},
         ],
         "objectIdField": "OBJECTID",
         "globalIdField": "globalid",
@@ -614,7 +626,7 @@ def jobmanagementsettings_table_def() -> Dict[str, Any]:
 def _ensure_table_fields(flc: FeatureLayerCollection, table_name: str, expected_fields: List[Dict[str, Any]]) -> None:
     """Add any missing fields to an existing table.
 
-    OID and GlobalID fields are skipped because they cannot be added after 
+    OID and GlobalID fields are skipped because they cannot be added after
     table creation.
     """
     table = _get_table_by_name(flc, table_name)
@@ -902,8 +914,6 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     global HOST, USERNAME, PASSWORD, TRACK_JOB_HISTORY, PORTAL_URL
 
-    print(f"Job Management Provisioning Script - {SCRIPT_VERSION}")
-
     args = _parse_args()
     HOST, USERNAME, PASSWORD, TRACK_JOB_HISTORY = prompt_for_inputs(
         host=args.host,
@@ -916,6 +926,7 @@ def main() -> None:
 
     for line in run_setup_hardcoded():
         print(line)
+
 
 if __name__ == "__main__":
     main()
