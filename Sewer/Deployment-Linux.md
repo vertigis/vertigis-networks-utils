@@ -11,7 +11,8 @@ deploys it with Docker or Podman.
 |----------------|-------|------|
 | `sewer` | `vertigisapps.azurecr.io/networks/sewer:<version>` | 8080 |
 
-The image itself is described in the [consolidated README](https://dev.azure.com/vertigis/Utilities/_git/Sewer?path=/consolidated/README.md).
+The image includes the Sewer Management API, Condition Classification API and
+worker, and SewerJS.
 
 ## Prerequisites
 
@@ -32,9 +33,7 @@ MEDIA_ROOT=/app/media
 XSD_PATH=/app/sewerjs/schemas/schema.xsd
 ```
 
-Add the media storage settings (`AZURE_STORAGE_*`) if needed; see the Media
-Storage section in the [consolidated README](https://dev.azure.com/vertigis/Utilities/_git/Sewer?path=/consolidated/README.md).
-Do not set `PORT`.
+Add the media storage settings (`AZURE_STORAGE_*`) if needed. Do not set `PORT`.
 
 ```bash
 # Install version 2.2.0 (asks for the registry credentials)
