@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from arcgis.gis import GIS
 from arcgis.features import FeatureLayerCollection
 
-SCRIPT_VERSION = "Networks v1.19"
+SCRIPT_VERSION = "Networks v1.20"
 
 def prompt_for_inputs(
     host: Optional[str] = None,
@@ -484,11 +484,9 @@ def jobs_layer_def() -> Dict[str, Any]:
             {"name": "status", "type": "esriFieldTypeString", "alias": "Status", "length": 50},
             {"name": "tags", "type": "esriFieldTypeString", "alias": "Tags", "length": 2000},
             {"name": "assignedto", "type": "esriFieldTypeString", "alias": "Assigned To", "length": 128},
-            {"name": "state", "type": "esriFieldTypeString", "alias": "Assignment State", "length": 50},
             {"name": "createdby", "type": "esriFieldTypeString", "alias": "Created By"},
             {"name": "createddate", "type": "esriFieldTypeDate", "alias": "Created Date"},
-            {"name": "lastupdated", "type": "esriFieldTypeDate", "alias": "Last Updated"},
-            {"name": "versionname", "type": "esriFieldTypeString", "alias": "Version Name", "length": 320},
+            {"name": "lastupdated", "type": "esriFieldTypeDate", "alias": "Last Updated"},            
             {"name": "assignedsupervisor", "type": "esriFieldTypeString", "alias": "Assigned Supervisor", "length": 128},
             {"name": "startdate", "type": "esriFieldTypeDate", "alias": "Start Date"},
             {"name": "enddate", "type": "esriFieldTypeDate", "alias": "End Date"},
@@ -511,9 +509,7 @@ def users_table_def() -> Dict[str, Any]:
         "fields": [
             {"name": "OBJECTID", "type": "esriFieldTypeOID", "alias": "OBJECTID"},
             {"name": "username", "type": "esriFieldTypeString", "alias": "User Name", "length": 255},
-            {"name": "usertype", "type": "esriFieldTypeString", "alias": "User Type", "length": 255},
-            {"name": "role", "type": "esriFieldTypeString", "alias": "Role", "length": 64},
-            {"name": "groupid", "type": "esriFieldTypeString", "alias": "Group ID", "length": 64},
+            {"name": "usertype", "type": "esriFieldTypeString", "alias": "User Type", "length": 255},            
             {"name": "flag", "type": "esriFieldTypeString", "alias": "User Flag", "length": 128},
             {"name": "GlobalID", "type": "esriFieldTypeGlobalID", "alias": "GlobalID"},
         ],
@@ -529,11 +525,8 @@ def groups_table_def() -> Dict[str, Any]:
         "fields": [
             {"name": "OBJECTID", "type": "esriFieldTypeOID", "alias": "OBJECTID"},
             {"name": "groupid", "type": "esriFieldTypeString", "alias": "Group ID", "length": 64},
-            {"name": "groups", "type": "esriFieldTypeString", "alias": "Groups", "length": 255},
-            {"name": "requiredfields", "type": "esriFieldTypeString", "alias": "Required Fields", "length": 255},
+            {"name": "groupname", "type": "esriFieldTypeString", "alias": "Group Name", "length": 255},            
             {"name": "resolution", "type": "esriFieldTypeString", "alias": "Conflict Resolution", "length": 255},
-            {"name": "tags", "type": "esriFieldTypeString", "alias": "Tags", "length": 255},
-            {"name": "isdeleted", "type": "esriFieldTypeString", "alias": "IsDeleted", "length": 255},
             {"name": "GlobalID", "type": "esriFieldTypeGlobalID", "alias": "GlobalID"},
         ],
         "objectIdField": "OBJECTID",
@@ -550,9 +543,7 @@ def jobfeatureservicebranches_table_def() -> Dict[str, Any]:
             {"name": "GlobalID", "type": "esriFieldTypeGlobalID", "alias": "GlobalID"},
             {"name": "jobid", "type": "esriFieldTypeString", "alias": "Job ID", "length": 64},
             {"name": "featureservice", "type": "esriFieldTypeString", "alias": "Feature Service", "length": 255},
-            {"name": "versionname", "type": "esriFieldTypeString", "alias": "Version Name", "length": 320},
-            {"name": "createddate", "type": "esriFieldTypeDate", "alias": "Created Date"},
-            {"name": "lastupdated", "type": "esriFieldTypeDate", "alias": "Last Updated"},
+            {"name": "versionname", "type": "esriFieldTypeString", "alias": "Version Name", "length": 320},          
         ],
         "objectIdField": "OBJECTID",
         "globalIdField": "GlobalID",
