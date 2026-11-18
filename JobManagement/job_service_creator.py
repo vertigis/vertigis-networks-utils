@@ -579,7 +579,7 @@ def groupusers_table_def() -> Dict[str, Any]:
             {"name": "OBJECTID", "type": "esriFieldTypeOID", "alias": "OBJECTID"},
             {"name": "GlobalID", "type": "esriFieldTypeGlobalID", "alias": "GlobalID"},
             {"name": "groupid", "type": "esriFieldTypeString", "alias": "Group ID", "length": 64},
-            {"name": "username", "type": "esriFieldTypeString", "alias": "User Name", "length": 255},            
+            {"name": "username", "type": "esriFieldTypeString", "alias": "User Name", "length": 255},
         ],
         "objectIdField": "OBJECTID",
         "globalIdField": "GlobalID",
