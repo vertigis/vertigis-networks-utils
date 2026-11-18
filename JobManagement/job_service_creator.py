@@ -507,7 +507,7 @@ def users_table_def() -> Dict[str, Any]:
         "name": "Users",
         "type": "Table",
         "fields": [
-            {"name": "OBJECTID", "type": "esriFieldTypeOID", "alias": "OBJECTID"},            
+            {"name": "OBJECTID", "type": "esriFieldTypeOID", "alias": "OBJECTID"},
             {"name": "username", "type": "esriFieldTypeString", "alias": "User Name", "length": 255},
             {"name": "usertype", "type": "esriFieldTypeString", "alias": "User Type", "length": 255},            
             {"name": "flag", "type": "esriFieldTypeString", "alias": "User Flag", "length": 128},
